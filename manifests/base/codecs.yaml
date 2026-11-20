@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://comtrya.dev/schema.json
+
+# The full media codecs, rather than the free-software-only ones Fedora ships.
+#
+# Fedora's own `ffmpeg-free` and `gstreamer1-plugins-*-free` cannot decode or encode the
+# patent-encumbered formats, so an MP4, an H.264 video or an MP3 is unplayable out of the
+# box. RPM Fusion carries the unrestricted builds: FFmpeg with x264, x265, AAC and mp3lame,
+# and the GStreamer plugins that were left out of `bad` and `ugly`.
+#
+# That needs RPM Fusion's free repository, which is also where the release package comes
+# from. Both `free` and `nonfree` get enabled, since a machine with the full codecs will
+# usually want the rest of what RPM Fusion offers, and the appstream data is what makes
+# those packages show up in a desktop app store.
+version: 1
+
+actions:
+  # The release packages enable `rpmfusion-free`, `rpmfusion-nonfree` and their updates
+  # repositories by dropping .repo files in /usr/share/dnf5/repos.d.
+  #
+  # Installing them by URL is already a no-op once they are present ("Nothing to do"), so
+  # this needs no guard. The version is read from the machine rather than written down:
+  # `$releasever` is not expanded in a command-line URL, since comtrya runs dnf without a
+  # shell, so the major version comes from `os.version` (which is `45.0.0` on Fedora 45).
+  - action: package.install
+    list:
+      - "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-{{ os.version | split(pat='.') | first }}.noarch.rpm"
+      - "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-{{ os.version | split(pat='.') | first }}.noarch.rpm"
+
+  # The metadata a desktop software centre lists RPM Fusion packages from. Without it they
+  # install and update fine but never appear as installable.
+  - action: package.install
+    list:
+      - rpmfusion-free-appstream-data
+      - rpmfusion-nonfree-appstream-data
+
+  # The replacement packages conflict with the `-free` ones rather than obsoleting them, so
+  # dnf refuses to resolve the transaction without permission to remove what is installed.
+  # What gets removed is the `-free` set and nothing else — ffmpeg-free, libavcodec-free,
+  # libavdevice-free, libavfilter-free, libavformat-free, libavutil-free, libswresample-free
+  # and libswscale-free — so the transaction is a swap rather than a partial upgrade.
+  #
+  # Once swapped, a second run has nothing to do and records no transaction.
+  - action: package.install
+    extra_args: [--allowerasing]
+    list:
+      - ffmpeg
+      - libavcodec-freeworld
+      - gstreamer1-plugins-bad-freeworld
+      - gstreamer1-plugins-ugly

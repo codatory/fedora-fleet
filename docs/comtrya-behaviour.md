@@ -236,6 +236,44 @@ exits 0 and leaves its override file alone.
 One way to misread this: piping the command through `tail` or `grep` reports the exit status
 of the last command in the pipe, not dnf's. `dnf ... | tail -3; echo $?` shows 0 for a failure.
 
+### `$releasever` in a package URL
+
+comtrya runs `dnf` directly, without a shell, so a URL given as a package name is passed
+through literally: `.../rpmfusion-free-release-$releasever.noarch.rpm` stays
+`$releasever` and 404s. There is no shell to expand it, and dnf only substitutes
+`$releasever` in its own repo configuration, not in arguments.
+
+Read the version from the machine instead. `os.version` is the full version (`45.0.0` on
+Fedora 45), so take the first component:
+
+```yaml
+- action: package.install
+  list:
+    - "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-{{ os.version | split(pat='.') | first }}.noarch.rpm"
+```
+
+Use single quotes inside the Tera expression. A YAML string is already double-quoted, and
+`pat=\"\.\"` inside it is a Tera parse error rather than an escaped quote.
+
+### Replacing a package that conflicts rather than obsoletes
+
+`ffmpeg` from RPM Fusion conflicts with Fedora's `ffmpeg-free` instead of obsoleting it, so
+dnf refuses the transaction (`installed package ffmpeg-free conflicts with ffmpeg-free
+provided by ffmpeg`) until it may remove what is installed. `extra_args` is passed to `dnf
+install` before the package names, so:
+
+```yaml
+- action: package.install
+  extra_args: [--allowerasing]
+  list:
+    - ffmpeg
+    - libavcodec-freeworld
+```
+
+`--allowerasing` is broad, and here it removed exactly the `-free` counterparts and nothing
+else. Check the transaction the first time rather than assuming: `dnf install --assumeno
+--allowerasing ...` lists what it will remove. A second run afterwards is a no-op.
+
 ## Variants replace, they do not merge
 
 A variant that applies is used *instead of* the action, not merged into it:

@@ -28,6 +28,7 @@ manifests/
     mise.yaml             Installs mise from its COPR, and activates it system-wide
     dev-tools.yaml        A developer's packages: toolchain, shells, containers
     browsers.yaml         Chrome and Brave Origin, from their vendors' repositories
+    codecs.yaml           RPM Fusion, and the full media codecs
     files/
       mise.sh             The /etc/profile.d hook mise.yaml installs
 scripts/
@@ -182,6 +183,28 @@ Both repositories are fetched over https and both keep `gpgcheck=1`, so the pack
 verified against the vendor's key. Adding Brave's repository is guarded, and enabling
 Chrome's does not need to be: `dnf config-manager addrepo` exits 1 when the repo file is
 already there, while `enable` is happy to repeat. See
+[`docs/comtrya-behaviour.md`](docs/comtrya-behaviour.md).
+
+## Media codecs
+
+Fedora ships only the free-software codecs: `ffmpeg-free` and the `gstreamer1-plugins-*-free`
+builds, which cannot handle H.264, H.265, AAC or MP3. `manifests/base/codecs.yaml` installs
+RPM Fusion's unrestricted builds instead, so video and audio play out of the box.
+
+The manifest enables both of RPM Fusion's repositories from their release packages, installs
+the appstream data that lists those packages in a desktop software centre, and then swaps in
+`ffmpeg`, `libavcodec-freeworld`, `gstreamer1-plugins-bad-freeworld` and
+`gstreamer1-plugins-ugly`.
+
+The swap needs `extra_args: [--allowerasing]`. The RPM Fusion packages conflict with Fedora's
+instead of obsoleting them, so dnf refuses the transaction until it may remove what is
+installed. It removes the eight `-free` packages — `ffmpeg-free`, and the `-free` variants of
+libavcodec, libavdevice, libavfilter, libavformat, libavutil, libswresample and libswscale —
+and nothing else. Afterwards a second run is a no-op.
+
+The release packages are fetched by URL, with the Fedora version read from `os.version`
+rather than written down: `$releasever` is not expanded in an argument, since comtrya runs
+dnf without a shell. Installing one is already a no-op once present. See
 [`docs/comtrya-behaviour.md`](docs/comtrya-behaviour.md).
 
 ## How mise is installed
