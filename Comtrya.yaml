@@ -1,0 +1,6 @@
+# Read when comtrya runs inside a checkout of this repository, and ignored when it
+# runs against the git URL. Nothing may go in here that changes what the manifests
+# do, or a local run and a remote run would disagree: variables in particular are
+# unavailable remotely, so the manifests keep their values in themselves.
+manifest_paths:
+  - manifests

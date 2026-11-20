@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=https://comtrya.dev/schema.json
+
+# Fedora workstations: this is the one manifest that every machine in the fleet gets.
+version: 1
+{% set comtrya_version = "v0.11.0" %}
+
+# One pinned comtrya per machine.
+#
+# Each version gets a directory of its own under /usr/local/lib, and /usr/local/bin/comtrya
+# is a symlink to the one in use, rather than the binary itself. comtrya's file.copy and
+# file.download write in place, and Linux refuses to write to a program that is running
+# ("Text file busy"), so upgrading that way would fail exactly when the version being
+# replaced is the one applying the manifest. Moving a symlink never writes to the running
+# file, and leaves the old version in place to go back to.
+#
+# comtrya's install script picks the asset for this CPU and verifies its SHA-256, which
+# saves listing checksums here, and the test around the download makes the second run a
+# no-op.
+actions:
+  - action: command.run
+    command: sh
+    privileged: true
+    args:
+      - -c
+      - |
+        set -eu
+        prefix=/usr/local/lib/comtrya/{{ comtrya_version }}
+        if [ -x "$prefix/comtrya" ]; then
+            exit 0
+        fi
+        script=$(mktemp)
+        trap 'rm -f "$script"' EXIT
+        curl -fsSL https://comtrya.dev/install.sh -o "$script"
+        VERSION={{ comtrya_version }} INSTALL_DIR="$prefix" sh "$script"
+
+  # It need not exist: on a machine where nothing has been installed into /usr/local/bin
+  # by hand or by a package, it is missing.
+  - action: directory.create
+    path: /usr/local/bin
+    privileged: true
+
+  # -f replaces the plain file that comtrya's own install script leaves behind, and -n
+  # replaces a link instead of following it. Running this twice changes nothing.
+  - action: command.run
+    command: ln
+    privileged: true
+    args:
+      - -sfn
+      - /usr/local/lib/comtrya/{{ comtrya_version }}/comtrya
+      - /usr/local/bin/comtrya

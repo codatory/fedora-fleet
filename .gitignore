@@ -1,0 +1,5 @@
+# comtrya's log, when `--log-file` is pointed here
+comtrya.log
+
+# Command Code session state
+.commandcode/
