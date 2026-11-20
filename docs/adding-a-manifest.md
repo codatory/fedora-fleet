@@ -16,9 +16,11 @@ manifests/
 belongs elsewhere, with a condition. Add a new directory freely — comtrya walks
 `manifests/` recursively and needs no registration.
 
-A machine gets a manifest when its `where` is true and, if the manifest has `labels`, when
-the run passes the matching `--label`. Prefer a `where` for a property of the machine, and
-`labels` for a choice the person running it makes.
+A machine gets a manifest when its `where` is true. `labels` are a different axis: they do
+nothing on an ordinary run, and `--label x` runs *only* the manifests labelled `x`, skipping
+everything else. Prefer a `where` for a property of the machine — it cannot silently take the
+rest of the fleet out of a run — and reach for `labels` only for a set of manifests that
+makes sense on its own, applied with `--label`. See `comtrya-behaviour.md`.
 
 ```yaml
 # manifests/role/gpu.yaml
@@ -109,7 +111,8 @@ comtrya -d manifests apply               # must be a no-op
 Read the output rather than the exit status. A skipped manifest, a typo'd `-m` and a
 `where` on a misspelled key all exit 0 without doing anything.
 
-When a manifest is gated, confirm both branches work:
+When a manifest is gated, confirm both branches work. `--label` runs only the labelled
+manifests, so a `--dry-run` with it shows the labelled set and not the whole machine:
 
 ```sh
 comtrya -d manifests apply --label laptop --dry-run
@@ -124,4 +127,6 @@ FLEET_ROLE=gpu comtrya -d manifests apply --dry-run
 - [ ] Every `command.run` checks before it acts, and uses `set -eu`
 - [ ] A second `apply` is a no-op
 - [ ] Any `where` key was confirmed with `comtrya contexts --show-values`
+- [ ] A `labels` gate was tested with `--label`: the manifest runs, and nothing it needs
+      was skipped along with the unlabelled manifests
 - [ ] Comments say *why*, not *what*

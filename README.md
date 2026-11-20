@@ -59,10 +59,16 @@ labels:
   - laptop
 ```
 
+`--label` is a filter over the whole run, not an addition to it: naming a label runs the
+manifests that carry it **and nothing else**. Unlabelled manifests are skipped too, so
+`apply --label laptop` on a fresh machine installs comtrya not at all. Label the manifests
+that a label-selected run must include, or select with a `where` instead. Without
+`--label`, every manifest runs and labels are ignored.
+
 New directories need no registration: comtrya walks `manifests/` recursively and applies
-everything it finds, skipping a manifest whose `where` is false or whose labels do not
-match. A manifest that fails stops the manifests that `depends` on it, not the others, so
-problems in one area do not hide another.
+everything it finds, skipping a manifest whose `where` is false. A manifest that fails stops
+the manifests that `depends` on it, not the others, so problems in one area do not hide
+another.
 
 Each run is idempotent, so the manifests describe the desired state and never a sequence
 of commands to replay.
@@ -105,7 +111,9 @@ what a run would change without changing anything:
 ```
 
 `bootstrap.sh` passes its arguments through to `comtrya apply`, so `-m`, `--label` and
-`--dry-run` work as they do with comtrya.
+`--dry-run` work as they do with comtrya — including `--label` narrowing the run to the
+labelled manifests (see above), which on a fresh machine installs neither comtrya nor
+anything else in `base/`.
 
 ### On an already-provisioned machine
 

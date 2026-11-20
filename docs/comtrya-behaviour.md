@@ -45,6 +45,31 @@ dependencies are satisfied at the same time, while steps that touch the same fil
 database still take turns. Leave it alone unless a run is slow for no other reason — the log
 of a parallel run is interleaved and harder to read.
 
+### `--label` selects, it does not add
+
+`--label laptop` runs the manifests whose `labels` include `laptop` **and skips every other
+manifest**, including those with no `labels` at all:
+
+```
+INFO base.comtrya: Skipping manifest, label not found label="laptop"
+```
+
+So a label-selected run on a fresh machine installs nothing under `base/`, comtrya
+included, and a dependency is no help: `depends` is followed inside the selected set, and an
+unlabelled dependency is skipped just like any other. Without `--label`, labels are ignored
+and every manifest runs.
+
+Two consequences for this repository:
+
+- Nothing in `base/` should rely on a labelled manifest having run, and a manifest that
+  gates with `labels` must not carry anything `base/` needs.
+- `where` is the safer gate. Only one `--label` may be given (`cannot be used multiple
+  times`, exit 2), and a comma-separated list is matched literally rather than as a set, so
+  selecting a combination of labels is not possible.
+
+`status` takes `--label` too, and ignores it — it lists every manifest either way, so it is
+not a way to preview what a labelled run would do.
+
 `-d` replaces `manifest_paths` from `Comtrya.yaml` entirely, and is resolved against the
 current directory.
 
@@ -78,6 +103,22 @@ depends: [./comtrya]        # resolves to base.comtrya
 
 `depends: [comtrya]` from inside `base/` does **not** resolve — a name without `./` is
 absolute from the manifest root. Slashes never work.
+
+A label-selected run filters the graph as it walks it, so a dependency that doesn't carry the
+label is skipped rather than pulled in. See `--label` above.
+
+### What counts as a manifest
+
+Files ending in `.yaml`, `.yml` or `.toml`, below the manifest directory, at any depth. In
+particular:
+
+- A `.yml` file is loaded exactly like `.yaml`; both are manifests.
+- A directory named `files` is skipped entirely, at any depth. That is why `files/` beside a
+  manifest can hold YAML that isn't a manifest — including nested directories under it.
+- The `Comtrya.yaml`/`.yml`/`.toml` beside the manifests is the config, not a manifest.
+
+`scripts/check.sh` follows the same rules for YAML, so its lint matches what comtrya will
+load. `.toml` manifests are not linted: this repository does not use them.
 
 Dependencies run first. If one fails, its dependents are skipped, the rest of the run
 continues, and the exit status is 1.

@@ -42,6 +42,8 @@ differs from its published documentation in ways that fail silently.
    ```
 
 4. If the manifest is gated, exercise the gate both ways with `--label` or an env var.
+   `--label x` runs *only* labelled manifests, skipping unlabelled ones like `base.*`, so a
+   label gate is not additive and cannot be combined with a second `--label`.
 5. Update `docs/comtrya-behaviour.md` if you discovered behaviour it doesn't record.
 
 ## Things that will bite you
