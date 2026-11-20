@@ -186,6 +186,37 @@ produced during the run (which is what the install manifest does).
 `dnf not available` and does nothing. Omit `provider` and let comtrya choose; it reports its
 choice in `comtrya contexts` under `packages.provider`.
 
+**`package.repository`** does not work for dnf on Fedora 45. Its dnf provider runs
+`dnf config-manager --add-repo <name>`, and dnf5 dropped `--add-repo`, so the step fails:
+
+```
+CommandExec with: dnf config-manager --assumeyes --add-repo <name> (as root) failed:
+Unknown argument "--add-repo" for command "config-manager".
+```
+
+Run it by hand and dnf5 exits 0 on that same error, so it fails silently outside comtrya.
+Add a repository with `command.run` instead, and guard it, because the command that enables
+one is not always a no-op. For a COPR:
+
+```yaml
+- action: command.run
+  command: sh
+  privileged: true
+  args:
+    - -c
+    - |
+      set -eu
+      if grep -rqs 'copr.fedorainfracloud.org/results/<owner>/<project>' /etc/yum.repos.d/; then
+          exit 0
+      fi
+      dnf copr enable -y <owner>/<project>
+```
+
+`dnf copr enable` rewrites the `.repo` file and contacts the Copr server every time it runs,
+so without the guard it is not idempotent even though the result is the same. The `copr`
+command comes from `dnf5-plugins`, which is present on the Fedora workstation image this was
+checked against.
+
 ## Variants replace, they do not merge
 
 A variant that applies is used *instead of* the action, not merged into it:

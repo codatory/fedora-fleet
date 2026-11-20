@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=https://comtrya.dev/schema.json
+
+# mise, from the jdxcode/mise COPR: Fedora does not carry it in its own repositories.
+#
+# A COPR is a third-party build, so this is the one place in `base/` that trusts something
+# outside Fedora. It is fetched over https and its own gpg key is imported by `dnf copr`,
+# which leaves `gpgcheck=1` in the generated repo file.
+version: 1
+
+actions:
+  # `package.repository` cannot do this: its dnf provider runs
+  # `dnf config-manager --add-repo`, which dnf5 removed, so the step fails. See
+  # docs/comtrya-behaviour.md. `dnf copr enable` is what the COPR documents.
+  #
+  # It is not idempotent in the sense of doing nothing — it fetches the repo info and rewrites
+  # the .repo file on every run — so it is guarded on the repository already being configured.
+  - action: command.run
+    command: sh
+    privileged: true
+    args:
+      - -c
+      - |
+        set -eu
+        if grep -rqs 'copr.fedorainfracloud.org/results/jdxcode/mise' /etc/yum.repos.d/; then
+            exit 0
+        fi
+        dnf copr enable -y jdxcode/mise
+
+  # No `provider`: comtrya uses the host's package manager, which is dnf on Fedora. Naming a
+  # provider that differs from the host's makes the action warn and do nothing.
+  - action: package.install
+    name: mise
+
+  # mise is a system package, so activation goes in the system profile rather than in each
+  # user's dotfile. Fedora sources /etc/profile.d/*.sh for login and interactive shells, so
+  # this covers a terminal without anything per-user being set up.
+  - action: file.copy
+    from: mise.sh
+    to: /etc/profile.d/mise.sh
+    chmod: "0644"
+    privileged: true
