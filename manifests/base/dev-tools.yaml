@@ -1,0 +1,52 @@
+# yaml-language-server: $schema=https://comtrya.dev/schema.json
+
+# A developer workstation's toolchain: what a project expects to find on PATH before mise
+# can manage the rest.
+#
+# mise covers language runtimes and per-project versions, but it assumes the machine can
+# build. Some tools come from source, and many projects `mise` sets up need a C toolchain,
+# headers and the usual autotools to be there already. So the groups come first and the
+# individual tools are what they do not carry.
+version: 1
+
+actions:
+  # `@` names a dnf group. It expands to whatever Fedora currently groups under that name,
+  # which is the point: the group tracks the distro rather than a list kept here.
+  - action: package.install
+    list:
+      - "@c-development"
+      - "@development-tools"
+
+  # The shell tools. `sqlite` is the CLI of the same name (Fedora's package is not called
+  # sqlite3); `ripgrep` installs the `rg` binary.
+  - action: package.install
+    list:
+      - git
+      - neovim
+      - tmux
+      - jq
+      - ripgrep
+      - sqlite
+
+  # Containers: podman for the engine, toolbox for a containerised shell that has the
+  # distribution's tools in it, podman-compose for a compose file.
+  - action: package.install
+    list:
+      - podman
+      - podman-compose
+      - toolbox
+
+  # What mise needs to unpack and build what it installs: it downloads release archives
+  # (zstd, xz, unzip) and some tools are built from source, which needs patch and headers.
+  - action: package.install
+    list:
+      - patch
+      - openssl-devel
+      - zlib-devel
+      - bzip2-devel
+      - libffi-devel
+      - readline-devel
+      - xz-devel
+      - pkgconf-pkg-config
+      - which
+      - file

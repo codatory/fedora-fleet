@@ -26,6 +26,7 @@ manifests/
   base/
     comtrya.yaml          Keeps one pinned comtrya installed
     mise.yaml             Installs mise from its COPR, and activates it system-wide
+    dev-tools.yaml        A developer's packages: toolchain, shells, containers
     files/
       mise.sh             The /etc/profile.d hook mise.yaml installs
 scripts/
