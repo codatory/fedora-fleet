@@ -20,10 +20,8 @@ must be performed exactly once.
 ## Layout
 
 ```
-.gitignore
-Comtrya.yaml              Configuration for running comtrya in a local checkout
-README.md
 bootstrap.sh              Prepares a new machine: gets comtrya, then applies the manifests
+Comtrya.yaml              Configuration for running comtrya in a local checkout
 manifests/
   base/
     comtrya.yaml          Keeps one pinned comtrya installed
@@ -95,14 +93,14 @@ comtrya -d https://github.com/<you>/fedora-fleet#main:manifests apply
 Comtrya clones the repository itself, updates the clone on every run, and runs the
 manifests in `manifests/` on that branch. No checkout is needed, and no `git`.
 
-Two caveats come with running from a URL:
+Two things are worth knowing about running from a URL:
 
-- `Comtrya.yaml` is read from the working directory, not from the clone, so only the
-  contents of `manifests/` travel with the URL. A manifest that needs a variable must not
-  rely on `Comtrya.yaml` setting it.
-- `--dry-run` and `comtrya status` are the cheap way to check a change before it is
-  applied, but note that `command.run` steps are not executed in a dry run, so they
-  cannot report what they would do.
+- `Comtrya.yaml` is read from the working directory, never from the clone, so only what is
+  inside `manifests/` travels with the URL. Nothing here depends on the config, but a
+  manifest added later must not read a variable from it.
+- `--dry-run` and `comtrya status` are the cheap way to check a change before applying it.
+  A `command.run` step is not executed in a dry run, though, so it cannot report what it
+  would do — the pinned comtrya install is one such step.
 
 ## How comtrya is installed
 
