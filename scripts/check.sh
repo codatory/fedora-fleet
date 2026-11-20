@@ -15,14 +15,22 @@ failures=""
 fail() { failures="$failures
 FAIL $1: $2"; }
 
+tmpfiles=$(mktemp)
+trap 'rm -f "$tmpfiles"' EXIT
+
 # Manifests are Tera-templated before they are parsed, so ordinary YAML tools reject them.
 # The structural checks below are therefore line-based, and comtrya is the real parser.
-for file in $(find manifests -name '*.yaml' | sort); do
+#
+# `files/` beside a manifest holds data for `file.copy`/`file.link`, never manifests, so
+# comtrya does not read it and neither should this. `.yml` is a manifest extension to
+# comtrya, so it is linted like `.yaml`.
+find manifests \( -name '*.yaml' -o -name '*.yml' \) | grep -v '/files/' | sort >"$tmpfiles"
+while IFS= read -r file; do
 	grep -q 'yaml-language-server: \$schema=https://comtrya.dev/schema.json' "$file" ||
 		fail "$file" "missing the schema comment"
 	grep -qx 'version: 1' "$file" ||
 		fail "$file" "missing 'version: 1'"
-done
+done <"$tmpfiles"
 
 # The version is defined once, and bootstrap.sh reads it from that definition.
 manifest=manifests/base/comtrya.yaml
@@ -36,10 +44,10 @@ if [ -n "$others" ]; then
 fi
 
 # A script that would abort when a command fails. Without -e the failure is swallowed and
-# the step reports success.
-for file in $(grep -rl 'command: sh' manifests || true); do
+# the step reports success. Any shell counts: `bash -c` fails the same way `sh -c` does.
+for file in $(grep -rlE 'command: *(sh|bash)$' manifests || true); do
 	grep -q 'set -eu' "$file" ||
-		fail "$file" "runs sh without 'set -eu'"
+		fail "$file" "runs a shell without 'set -eu'"
 done
 
 if [ -n "$failures" ]; then
