@@ -27,6 +27,7 @@ manifests/
     comtrya.yaml          Keeps one pinned comtrya installed
     mise.yaml             Installs mise from its COPR, and activates it system-wide
     dev-tools.yaml        A developer's packages: toolchain, shells, containers
+    browsers.yaml         Chrome and Brave Origin, from their vendors' repositories
     files/
       mise.sh             The /etc/profile.d hook mise.yaml installs
 scripts/
@@ -160,6 +161,28 @@ nothing points at an old version, remove it:
 ```sh
 rm -rf /usr/local/lib/comtrya/v0.10.0
 ```
+
+## Browsers
+
+`manifests/base/browsers.yaml` installs Google Chrome and Brave Origin, both from their
+vendors' repositories.
+
+Chrome's repository is defined but disabled. Its definition ships in
+`fedora-workstation-repositories`, which the manifest installs rather than assumes — a
+Workstation image has it already, and one that does not would otherwise have no such
+repository to enable. The manifest then enables it with `dnf config-manager enable` and
+installs `google-chrome-stable`.
+
+Brave's is added from `https://brave-browser-rpm-release.s3.brave.com/brave-browser.repo`.
+That repository carries both `brave-browser` and `brave-origin`; the manifest installs
+Origin, the standalone build. Brave makes Origin free on Linux, though it is a one-time
+purchase elsewhere.
+
+Both repositories are fetched over https and both keep `gpgcheck=1`, so the packages are
+verified against the vendor's key. Adding Brave's repository is guarded, and enabling
+Chrome's does not need to be: `dnf config-manager addrepo` exits 1 when the repo file is
+already there, while `enable` is happy to repeat. See
+[`docs/comtrya-behaviour.md`](docs/comtrya-behaviour.md).
 
 ## How mise is installed
 

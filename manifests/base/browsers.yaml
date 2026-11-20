@@ -1,0 +1,57 @@
+# yaml-language-server: $schema=https://comtrya.dev/schema.json
+
+# Browsers, both from their vendors' repositories rather than Fedora's.
+#
+# Two third-party repositories live here, so this is the other file in `base/` that trusts
+# something outside Fedora. Both are fetched over https and both have `gpgcheck=1` in the
+# repo file, so packages are verified against the vendor's key.
+version: 1
+
+actions:
+  # Chrome's repository is defined but disabled, and its definition ships in this package,
+  # which a Workstation image already has. Installing it explicitly means the manifest works
+  # on any Fedora rather than only there — without it, `enable` finds no such repository.
+  - action: package.install
+    name: fedora-workstation-repositories
+
+  # Google's package is `google-chrome-stable`; `google-chrome` is the repository.
+  #
+  # `config-manager enable` writes an override rather than a repo file, and leaves it alone
+  # when the repository is already enabled, so this needs no guard. It replaces comtrya's
+  # `package.repository`, which dnf cannot run on dnf5 — see docs/comtrya-behaviour.md.
+  - action: command.run
+    command: sh
+    privileged: true
+    args:
+      - -c
+      - |
+        set -eu
+        dnf config-manager enable google-chrome
+
+  - action: package.install
+    name: google-chrome-stable
+
+  # Brave's own repository, which carries both Brave and Brave Origin. `addrepo` fetches the
+  # repo file over https, and the key it names is what vouches for the packages.
+  #
+  # Guarded because `addrepo` is not idempotent: run against a repo file that already
+  # configures the same IDs it exits 1 (`Add "--overwrite" to overwrite`), which under
+  # `set -eu` fails the step. It would be tempting to add `--overwrite`, but that refetches
+  # the file every run and so is never a no-op.
+  - action: command.run
+    command: sh
+    privileged: true
+    args:
+      - -c
+      - |
+        set -eu
+        if grep -rqs 'brave-browser-rpm-release.s3.brave.com' /etc/yum.repos.d/; then
+            exit 0
+        fi
+        dnf config-manager addrepo \
+            --from-repofile=https://brave-browser-rpm-release.s3.brave.com/brave-browser.repo
+
+  # `brave-origin`, not `brave-browser`: Origin is the standalone package, and Brave makes
+  # it free on Linux. Both are in the same repository and install side by side.
+  - action: package.install
+    name: brave-origin

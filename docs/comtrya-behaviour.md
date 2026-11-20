@@ -217,6 +217,25 @@ so without the guard it is not idempotent even though the result is the same. Th
 command comes from `dnf5-plugins`, which is present on the Fedora workstation image this was
 checked against.
 
+**`dnf config-manager addrepo`** is not idempotent either. Against a repo file that already
+configures the same IDs it exits **1**:
+
+```
+File "/etc/yum.repos.d/<name>.repo" already exists and configures repositories with IDs
+"<id>". Add "--overwrite" to overwrite.
+```
+
+Under `set -eu` that fails the step, so a manifest that adds a repository this way fails on
+its second run. `--overwrite` is not the fix: it exits 0 but refetches and rewrites the file
+every time, so the step never becomes a no-op. Guard on the repo file instead, the way the
+COPR example above does.
+
+`dnf config-manager enable <repo-id>` is fine unguarded: re-enabling an enabled repository
+exits 0 and leaves its override file alone.
+
+One way to misread this: piping the command through `tail` or `grep` reports the exit status
+of the last command in the pipe, not dnf's. `dnf ... | tail -3; echo $?` shows 0 for a failure.
+
 ## Variants replace, they do not merge
 
 A variant that applies is used *instead of* the action, not merged into it:
