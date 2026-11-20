@@ -173,20 +173,40 @@ rewrites the `.repo` file every time it runs. See
 [`docs/comtrya-behaviour.md`](docs/comtrya-behaviour.md).
 
 Activation is a file in `/etc/profile.d/` rather than a line appended to each user's dotfile,
-because the package is system-wide. The file runs `mise activate <shell>` at login instead of
+because the package is system-wide. The file runs `mise activate` at shell startup instead of
 containing its output: that output names the calling user's own shims directory, so a
-generated file would point every user at whoever ran the manifest. Bash and zsh are
-activated; other shells are left alone.
+generated file would point every user at whoever ran the manifest. Bash and zsh are handled;
+other shells are left alone.
 
-The zsh branch needs `emulate -L zsh` before the eval. Fedora sources `profile.d` from
-`/etc/zprofile` and `/etc/zshrc` inside `emulate -L ksh`, and mise's zsh code uses `(( $+
-functions[...] ))`, which is not arithmetic test syntax in ksh. Without the `emulate`, every
-zsh startup prints `bad output format specification` once for each of those tests — five
-lines in mise 2026.11.11. Activation still works, which is what makes it easy to miss; it is
-the stderr that is wrong.
+It gives the two kinds of shell different things, as mise recommends:
 
-Verify with `mise doctor` (it should say `activated: yes`) rather than by eye, and note that
-a shell needs a fresh login to pick the file up.
+- **A login shell gets shims on `PATH`** (`mise activate --shims`). Anything started from it
+  — an editor, an IDE, a script that never reads a shell startup file — then finds mise's
+  tools through `~/.local/share/mise/shims`. One `PATH` entry, no per-prompt work.
+- **An interactive shell gets full activation**, which follows the directory on `cd` and
+  exports the project's `[env]` variables into the shell itself.
+
+The difference is visible: in a project with `[env] FOO` set, an interactive shell sees
+`$FOO`, a login shell does not — but a shimmed command run from that login shell does, since
+a shim resolves the environment each time it runs. Shims resolve the version from the current
+directory too, so a non-interactive login shell still gets the right `node` inside a project.
+
+Fedora sources `profile.d` exactly once per shell — from `/etc/profile` for a login shell,
+and from `/etc/bashrc` or `/etc/zshrc` for an interactive one that is not — so a single file
+cannot go in a "login" one and an "interactive" one without being skipped somewhere. It tells
+the modes apart instead, with `shopt -q login_shell` and `[[ -o login ]]`.
+
+The zsh branch needs `emulate -L zsh` before the full activation only: Fedora sources
+`profile.d` inside `emulate -L ksh`, and mise's zsh code uses `(( $+functions[...] ))`, which
+is not arithmetic test syntax in ksh. Without the `emulate`, every zsh startup prints `bad
+output format specification` once for each of those tests — five lines in mise 2026.11.11.
+Activation still works, which is what makes it easy to miss. `--shims` is a plain `export`
+and needs no such care.
+
+Verify with `mise doctor`: an interactive shell reports `activated: yes` and a login shell
+reports `activated: no`, which is expected — it has the shims on `PATH` rather than PATH
+activation. The `path:` section of the same output lists `~/.local/share/mise/shims` in a
+login shell. A shell needs a fresh login to pick the file up.
 
 ## Conventions
 
