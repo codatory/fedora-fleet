@@ -25,6 +25,9 @@ Comtrya.yaml              Configuration for running comtrya in a local checkout
 manifests/
   base/
     comtrya.yaml          Keeps one pinned comtrya installed
+    mise.yaml             Installs mise from its COPR, and activates it system-wide
+    files/
+      mise.sh             The /etc/profile.d hook mise.yaml installs
 scripts/
   check.sh                Lints the manifests, and plans them with --apply
 docs/
@@ -156,6 +159,33 @@ nothing points at an old version, remove it:
 ```sh
 rm -rf /usr/local/lib/comtrya/v0.10.0
 ```
+
+## How mise is installed
+
+`manifests/base/mise.yaml` installs mise from the `jdxcode/mise` COPR, since Fedora does not
+carry it, and then activates it for every user.
+
+Enabling a COPR is a `command.run`, not `package.repository`: comtrya's dnf provider calls a
+`config-manager` option that dnf5 removed, so the action fails. The step is guarded on the
+repository already being configured, because `dnf copr enable` contacts the Copr server and
+rewrites the `.repo` file every time it runs. See
+[`docs/comtrya-behaviour.md`](docs/comtrya-behaviour.md).
+
+Activation is a file in `/etc/profile.d/` rather than a line appended to each user's dotfile,
+because the package is system-wide. The file runs `mise activate <shell>` at login instead of
+containing its output: that output names the calling user's own shims directory, so a
+generated file would point every user at whoever ran the manifest. Bash and zsh are
+activated; other shells are left alone.
+
+The zsh branch needs `emulate -L zsh` before the eval. Fedora sources `profile.d` from
+`/etc/zprofile` and `/etc/zshrc` inside `emulate -L ksh`, and mise's zsh code uses `(( $+
+functions[...] ))`, which is not arithmetic test syntax in ksh. Without the `emulate`, every
+zsh startup prints `bad output format specification` once for each of those tests — five
+lines in mise 2026.11.11. Activation still works, which is what makes it easy to miss; it is
+the stderr that is wrong.
+
+Verify with `mise doctor` (it should say `activated: yes`) rather than by eye, and note that
+a shell needs a fresh login to pick the file up.
 
 ## Conventions
 
