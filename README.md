@@ -25,6 +25,12 @@ Comtrya.yaml              Configuration for running comtrya in a local checkout
 manifests/
   base/
     comtrya.yaml          Keeps one pinned comtrya installed
+scripts/
+  check.sh                Lints the manifests, and plans them with --apply
+docs/
+  comtrya-behaviour.md    What the pinned comtrya actually does, checked by running it
+  adding-a-manifest.md    How to add one, and what to check before committing
+.agents/skills/           An agent skill for working in this repository
 ```
 
 Manifests are named by their path below `manifests/`, with dots instead of slashes:
@@ -58,12 +64,29 @@ everything it finds, skipping a manifest whose `where` is false or whose labels 
 match. A manifest that fails stops the manifests that `depends` on it, not the others, so
 problems in one area do not hide another.
 
-Note that `where` is evaluated by comtrya's condition engine, not rendered like the rest of
-the manifest, so Tera functions such as `read_file_contents` are not available in it. Test
-what is available with `comtrya contexts`.
-
 Each run is idempotent, so the manifests describe the desired state and never a sequence
 of commands to replay.
+
+## Making a change
+
+Read [`docs/adding-a-manifest.md`](docs/adding-a-manifest.md) before adding a manifest.
+Then:
+
+```sh
+./scripts/check.sh --apply
+```
+
+That lints the manifests and asks comtrya to plan every one. It catches a manifest that
+can't be parsed or planned, but not one that quietly does nothing, so also read the run:
+
+```sh
+comtrya -d manifests apply      # then run it again: the second run must be a no-op
+```
+
+Note that global options go before the subcommand (`comtrya -v -d manifests apply`), and
+that neither a skipped manifest nor a typo'd `-m` sets a failing exit status. Both are in
+[`docs/comtrya-behaviour.md`](docs/comtrya-behaviour.md), which records where the pinned
+version disagrees with its published documentation — heeding it saves an afternoon.
 
 ## Initializing a new machine
 
@@ -133,9 +156,9 @@ rm -rf /usr/local/lib/comtrya/v0.10.0
 - **Idempotent by construction.** Prefer actions that check for drift (`package.install`,
   `file.copy`, `file.link`, `directory.create`) over `command.run`, and guard the ones that
   have no check of their own with a test, as the install step does.
-- **Claims are tested.** The manifests are validated against the comtrya version they pin,
-  not against the documentation, which describes unreleased behavior: `os.arch`, for one,
-  is documented but absent from v0.11.0.
+- **Claims are tested.** Everything in [`docs/comtrya-behaviour.md`](docs/comtrya-behaviour.md)
+  was confirmed by running the pinned version. The published documentation describes `main`,
+  so where the two disagree the file in this repository wins.
 - **Legible first.** A reader should be able to tell what a machine gets, and why, without
   running anything.
 
@@ -143,3 +166,6 @@ rm -rf /usr/local/lib/comtrya/v0.10.0
 
 Fedora 45 or a close relative. Nothing here is specific to a minor release, but the
 repository assumes `dnf`, `systemd` and a `/usr/local` prefix.
+
+Checking a change needs `curl`, plus `git` for the URL form. `scripts/check.sh --apply`
+needs comtrya itself, and takes its path from `COMTRYA` when it is not on `PATH`.

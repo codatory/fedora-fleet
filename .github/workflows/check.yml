@@ -1,0 +1,24 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned comtrya
+        run: |
+          version=$(sed -n 's/.*{% set comtrya_version = "\([^"]*\)" %}.*/\1/p' \
+            manifests/base/comtrya.yaml)
+          curl -fsSL https://comtrya.dev/install.sh |
+            VERSION="$version" INSTALL_DIR="$HOME/.local/bin" sh
+
+      - name: Lint and plan
+        # `status` and `--dry-run` need to read the manifests, not change anything, so this
+        # job runs as the default user. A manifest that needs root to even plan is a
+        # manifest that cannot be checked here.
+        run: ./scripts/check.sh --apply
