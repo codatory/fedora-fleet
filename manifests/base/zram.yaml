@@ -1,0 +1,63 @@
+# yaml-language-server: $schema=https://comtrya.dev/schema.json
+
+# zram swap, compressed with lz4.
+#
+# zram is what Fedora Workstation uses for swap: zram-generator-defaults ships
+# /usr/lib/systemd/zram-generator.conf, which creates /dev/zram0 at `min(ram, 8192)` and
+# leaves the compressor at the kernel default, lzo-rle.
+#
+# The package is installed here rather than assumed, so the drop-in below merges with a
+# known section. A drop-in on its own is not inert: the generator creates a device for any
+# [zramN] section it finds, so on a machine without the vendor file this file would create
+# a zram device at the generator's own default size. Once the fleet goes back to zswap,
+# this manifest and that package go away together.
+version: 1
+
+actions:
+  - action: package.install
+    name: zram-generator-defaults
+
+  # A drop-in rather than /etc/systemd/zram-generator.conf: the main config file replaces
+  # the vendor one instead of merging with it, so writing it here would drop the size.
+  #
+  # `file.copy` creates the parent directory when it is missing, which
+  # /etc/systemd/zram-generator.conf.d is on a stock machine.
+  - action: file.copy
+    from: zram-compression.conf
+    to: /etc/systemd/zram-generator.conf.d/99-compression.conf
+    chmod: "0644"
+    privileged: true
+
+  # The kernel refuses to change the compressor of an initialized device (comp_algorithm
+  # returns EBUSY), so converging without a reboot means releasing the swap and letting
+  # systemd set the device up again. The config file alone would do it at next boot.
+  #
+  # `stop` on the swap unit runs swapoff — and, because the unit is ordered After= the
+  # setup service, it runs before the setup service's ExecStop resets the device, so the
+  # reset does not hit the device while it is still open. `start` then re-runs the setup
+  # service, which writes the compressor before the disksize and re-runs mkswap.
+  #
+  # If swapoff cannot move the pages back into RAM it fails and leaves the swap in use, so
+  # a failed step here costs a noisy run, not a machine without swap.
+  - action: command.run
+    command: sh
+    privileged: true
+    args:
+      - -c
+      - |
+        set -eu
+        conf=/etc/systemd/zram-generator.conf.d/99-compression.conf
+        sysfs=/sys/block/zram0/comp_algorithm
+        want=$(sed -e 's/^[[:space:]]*#.*$//' "$conf" 2>/dev/null \
+            | sed -n 's/^[[:space:]]*compression-algorithm[[:space:]]*=[[:space:]]*//p' \
+            | head -n 1 | tr -d '[:blank:]')
+        if [ ! -r "$sysfs" ] || [ -z "$want" ]; then
+            exit 0
+        fi
+        have=$(sed -n 's/.*\[\(.*\)\].*/\1/p' "$sysfs")
+        if [ "$have" = "$want" ]; then
+            exit 0
+        fi
+        systemctl daemon-reload
+        systemctl stop dev-zram0.swap
+        systemctl start dev-zram0.swap

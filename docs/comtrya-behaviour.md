@@ -173,6 +173,11 @@ pinning work. Checksums come from the release page; comtrya requires 64 hex char
 you write to a running executable, so a manifest cannot replace the comtrya binary that is
 running it. This is why comtrya is installed to a versioned directory with a symlink.
 
+**`file.copy` creates the parent directory** of `to` when it is missing, so a nested target
+such as `/etc/systemd/zram-generator.conf.d/99-compression.conf` needs no separate
+`directory.create`. Checked by copying into a path whose directories did not exist, then
+looking for the file.
+
 **`file.copy`** accepts an absolute `from`, which bypasses the `files/` directory. Relative
 `from` paths are resolved under the manifest's sibling `files/` directory, and the file must
 be there at plan time, or the action fails — including under `--dry-run`.
@@ -273,6 +278,153 @@ install` before the package names, so:
 `--allowerasing` is broad, and here it removed exactly the `-free` counterparts and nothing
 else. Check the transaction the first time rather than assuming: `dnf install --assumeno
 --allowerasing ...` lists what it will remove. A second run afterwards is a no-op.
+
+## zram, zswap and reinitialising a device
+
+Verified on Fedora 45 with zram-generator 1.2.1 and zram-generator-defaults. `zram.yaml`
+depends on this.
+
+**zram and zswap are different things, and Fedora Workstation uses zram.** zswap is a
+compressed write-back cache in front of a disk swap device; zram is a compressed block device
+used *as* swap. On this image zswap is present but disabled (`/sys/module/zswap/parameters/
+enabled` is `N`, compressor `lzo`) and `/dev/zram0` is the only swap. So "change the zswap
+compressor" means editing zram-generator, not `zswap.compressor`.
+
+**The algorithm comes from `zram-generator-defaults`, not the kernel.** The kernel default is
+lzo-rle (`CONFIG_ZRAM_DEF_COMP="lzo-rle"`), and
+`/usr/lib/systemd/zram-generator.conf` from `zram-generator-defaults` sets only
+`zram-size = min(ram, 8192)`, leaving `compression-algorithm` unset. Unset means the kernel
+default is kept.
+
+**A drop-in merges with the main config; the main config replaces it.** The generator reads
+the first of `/run`, `/etc`, `/usr/local/lib`, `/usr/lib` `systemd/zram-generator.conf` — so
+writing `/etc/systemd/zram-generator.conf` **hides** the vendor file rather than merging with
+it, and drops `zram-size`. A file in `/etc/systemd/zram-generator.conf.d/` merges per key
+with the vendor section:
+
+```sh
+# vendor: zram-size = min(ram, 8192)
+# drop-in: compression-algorithm = lz4
+# result: 8192MB, lz4
+```
+
+**A drop-in alone creates a device.** The generator creates one `/dev/zramN` per `[zramN]`
+section it finds anywhere, so the same drop-in on a machine without
+`zram-generator-defaults` creates a zram device at the generator default,
+`min(ram / 2, 4096)` — a different size than the fleet means. This is why `zram.yaml`
+installs the package explicitly, and why reverting to zswap means deleting the drop-in, not
+just disabling it. Check without root using the generator's `ZRAM_GENERATOR_ROOT`:
+
+```sh
+ZRAM_GENERATOR_ROOT=/tmp/fake /usr/lib/systemd/system-generators/zram-generator /tmp/fake/out
+```
+
+**The compressor cannot be changed on an initialized device.** `comp_algorithm` returns
+`EBUSY` once `disksize` has been written (`init_done`), and `reset` returns `EBUSY` while
+anything has the device open. So a manifest has to release the swap first:
+
+```sh
+systemctl daemon-reload
+systemctl stop dev-zram0.swap     # swapoff
+systemctl start dev-zram0.swap    # re-runs the setup service
+```
+
+Stopping the swap unit runs `swapoff`, and the setup service's `ExecStop` (the device reset)
+does not run before it because the swap unit is ordered `After=` the setup service. The
+subsequent `start` re-runs `systemd-zram-setup@zram0.service`, which writes
+`comp_algorithm` before `disksize` and then re-runs `systemd-makefs`. A failed `swapoff`
+leaves the swap in place, so the risk is a failed step rather than a machine without swap.
+
+`/etc/fstab` has no entry for `/dev/zram0`; the swap unit is generated from the config, so
+editing the drop-in is the only thing to change.
+
+**Secondary (recompression) algorithms are allowed on this kernel, but nothing drives
+them.** `CONFIG_ZRAM_MULTI_COMP=y` on the installed 7.3.4 kernel, so
+`/sys/block/zram0/recomp_algorithm` exists and `comp_algorithm` accepts up to four
+priorities (`ZRAM_PRIMARY_COMP` 0 and secondaries 1–3). zram-generator reads the same
+`compression-algorithm` list as priorities: `compression-algorithm = lz4 zstd` sets lz4
+primary and zstd as secondary 1, and writes `recomp_algorithm` for everything after the
+first. `recomp_algorithm` is empty here because no secondary is configured.
+
+Two things make it useless as configured, and both have to change before adding one:
+
+- **Nothing triggers recompression.** The kernel only recompresses when `recompress` is
+  written, and nothing on a stock Fedora 45 does that — there is no workqueue, timer or
+  unit behind it, and zramctl has no recompression option, only `--reset`. So a secondary
+  algorithm would sit configured and unused.
+- **Idle recompression needs page-age tracking, which is off.** `type=idle` and
+  `type=huge_idle` only select pages already flagged `ZRAM_IDLE`, and
+  `echo <age> > idle` returns `EINVAL` without `CONFIG_ZRAM_TRACK_ENTRY_ACTIME`
+  (`not set` here). Only `echo all > idle` works, which is a manual marking, not an age
+  policy.
+
+`type=huge` does not need idle tracking, so a `recompress` step could target incompressible
+pages right after boot. It is not worth adding until there is a measurement showing those
+pages are the exception rather than the rule: at 4K of data in the device, there is nothing
+to recompress yet.
+
+**`vm.page-cluster = 0` is a real no-readahead setting**, not a special case to memorise:
+`mm/swap_state.c` computes `max_pages = 1 << page_cluster` and returns 1 when that is `<= 1`.
+The default of 3 reads eight pages per swap-in fault. That batching pays for seek cost,
+which zram swap does not have, so the batch mostly decompresses neighbours the fault may not
+need. It only helps a swap-heavy workload if those neighbours turn out to be needed; the
+knob is a latency trade either way, not a free win.
+
+## sysctl files and `command.run`
+
+Verified with procps-ng 4.0.6 on Fedora 45 (kernel 7.3.4). `vm-tuning.yaml` depends on all
+of this.
+
+**`sysctl -p file` only accepts `key = value`.** A `key: value` line — the form used in
+blog posts and in some examples — is rejected with `invalid syntax, continuing...` and the
+line is skipped, yet the command still exits **0**. A whole file written with colons loads
+nothing and reports success. `sysctl --dry-run -p file` prints the `key = value` lines it
+parsed, which is the quickest way to see that a line was dropped.
+
+**An unknown key exits 1 and the rest of the file still applies**, so a manifest file whose
+keys are missing on an older kernel fails the step rather than silently doing part of the
+job. `-e` suppresses that and makes an unknown key a no-op, which is the wrong choice for a
+manifest: it would hide a typo forever.
+
+**`sysctl -p` has no way to report whether it changed anything.** It prints the values it
+wrote, which it also does when the value was already correct, so its output cannot gate a
+second run. There is no `--check`. The guard has to read the keys back from `/proc/sys`
+first, as `vm-tuning.yaml` does:
+
+```sh
+differs=0
+while IFS= read -r line; do
+    case "$line" in ''|'#'*) continue ;; esac
+    key=${line%%=*}; value=${line#*=}
+    current=$(sysctl -n "$(printf '%s' "$key" | tr -d '[:blank:]')")
+    [ "$current" = "$(printf '%s' "$value" | tr -d '[:blank:]')" ] || differs=1
+done <"$conf"
+if [ "$differs" -eq 0 ]; then
+    exit 0
+fi
+sysctl -q -p "$conf"
+```
+
+Use that `if`, not a trailing `[ "$differs" -eq 0 ] && exit 0`. As the last line, that
+and-list returns 1 when nothing differs, so the converged machine exits 1 and comtrya records
+a failed step. `set -e` does not rescue it: the failing command is the last line of the
+script, and its status becomes the script's.
+
+**Dirty-memory `bytes` and `ratio` knobs are mutually exclusive.** Writing either zeroes the
+other, and the handlers differ:
+
+- `dirty_background_ratio_handler` zeroes `dirty_background_bytes` on **every** write, even
+  one that does not change the value.
+- `dirty_bytes_handler` zeroes `dirty_ratio` only when `dirty_bytes` actually changed.
+  `dirty_ratio_handler` likewise zeroes `dirty_bytes` only on a change.
+
+So a file that sets `dirty_background_bytes` and then `dirty_background_ratio = 0` — the
+obvious way to write "bytes, not a ratio" — ends up with **both** zero, and the kernel
+throttles writers at the first dirty page. Set the byte knobs alone; each ratio then reads
+back as 0 because the kernel set it that way.
+
+**`/etc/sysctl.conf` is a symlink to `/etc/sysctl.d/99-sysctl.conf`** on Fedora 45, so a file
+named later than `99-` sorts after it. An earlier name cannot override Fedora's.
 
 ## Variants replace, they do not merge
 

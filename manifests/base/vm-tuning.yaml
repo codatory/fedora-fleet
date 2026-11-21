@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://comtrya.dev/schema.json
+
+# VM tuning for a workstation whose swap is zram, which Fedora Workstation's is.
+#
+# The file is what survives a reboot: systemd-sysctl reads /etc/sysctl.d at boot, in lexical
+# order, and this name sorts after the vendor files in /usr/lib/sysctl.d. The second step
+# loads the same file into the running kernel, so a machine converges without a reboot.
+version: 1
+
+actions:
+  # 0644 because the kernel parameters it sets are root-owned and readable; there is nothing
+  # secret in it. `file.copy` compares content, so an edit here is picked up and a changed
+  # `chmod` is corrected, while an unchanged file is left alone.
+  - action: file.copy
+    from: vm-tuning.conf
+    to: /etc/sysctl.d/99-vm-tuning.conf
+    chmod: "0644"
+    privileged: true
+
+  # `command.run` cannot check itself, so the guard reads every line of the config back from
+  # /proc/sys and only writes when one of them differs from what the file asks for. Without
+  # the guard this would rewrite the sysctls on every apply and never be a no-op.
+  #
+  # `sysctl -p` reports values it sets, and `-q` silences that; the kernel gives no way to
+  # tell whether a write changed anything, which is why the comparison happens here first.
+  - action: command.run
+    command: sh
+    privileged: true
+    args:
+      - -c
+      - |
+        set -eu
+        conf=/etc/sysctl.d/99-vm-tuning.conf
+        differs=0
+        while IFS= read -r line; do
+            case "$line" in ''|'#'*) continue ;; esac
+            key=${line%%=*}
+            value=${line#*=}
+            key=$(printf '%s' "$key" | tr -d '[:blank:]')
+            value=$(printf '%s' "$value" | tr -d '[:blank:]')
+            current=$(sysctl -n "$key")
+            [ "$current" = "$value" ] || differs=1
+        done <"$conf"
+        if [ "$differs" -eq 0 ]; then
+            exit 0
+        fi
+        sysctl -q -p "$conf"

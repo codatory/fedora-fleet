@@ -29,8 +29,12 @@ manifests/
     dev-tools.yaml        A developer's packages: toolchain, shells, containers
     browsers.yaml         Chrome and Brave Origin, from their vendors' repositories
     codecs.yaml           RPM Fusion, and the full media codecs
+    vm-tuning.yaml        Kernel VM tuning for zram swap, via /etc/sysctl.d
+    zram.yaml             zram swap compressed with lz4
     files/
       mise.sh             The /etc/profile.d hook mise.yaml installs
+      vm-tuning.conf      The sysctl.d file vm-tuning.yaml installs
+      zram-compression.conf  The zram-generator drop-in zram.yaml installs
 scripts/
   check.sh                Lints the manifests, and plans them with --apply
 docs/
@@ -253,6 +257,53 @@ Verify with `mise doctor`: an interactive shell reports `activated: yes` and a l
 reports `activated: no`, which is expected — it has the shims on `PATH` rather than PATH
 activation. The `path:` section of the same output lists `~/.local/share/mise/shims` in a
 login shell. A shell needs a fresh login to pick the file up.
+
+## zram swap
+
+`manifests/base/zram.yaml` switches zram's compressor from the kernel default, `lzo-rle`, to
+`lz4`. Fedora Workstation's `zram-generator-defaults` creates `/dev/zram0` at
+`min(ram, 8192)` and leaves the compressor alone, so the manifest installs that package and
+adds a drop-in that changes only the algorithm.
+
+lz4 is a deliberate trade: it compresses and decompresses faster than lzo-rle at a slightly
+worse ratio. For swap that is usually the right side of the trade, because decompression
+sits on the page-fault path while the ratio mostly buys swap capacity that never gets used.
+
+The drop-in is in `/etc/systemd/zram-generator.conf.d/` rather than a
+`/etc/systemd/zram-generator.conf`, because the main config file **replaces** the vendor one
+instead of merging with it; writing it would silently drop the size setting.
+
+The kernel will not change the compressor of an initialized device, so the last step
+releases the swap and lets systemd set the device up again when the algorithm differs.
+That is what makes the change take effect without a reboot.
+
+Once the fleet goes back to zswap, delete this manifest along with the package it installs.
+The drop-in is not harmless on its own: the generator creates a device for any `[zramN]`
+section it finds, so leaving it behind would create zram swap at the generator's default
+size on a machine that is supposed to use zswap.
+
+## VM tuning
+
+`manifests/base/vm-tuning.yaml` installs `/etc/sysctl.d/99-vm-tuning.conf` and loads it into
+the running kernel, so a machine converges without a reboot. systemd-sysctl reads the same
+file at boot; the `99-` prefix sorts it after the vendor files in `/usr/lib/sysctl.d` and
+after Fedora's `99-sysctl.conf` symlink.
+
+The values assume swap is zram, which it is on Fedora Workstation. Swapping is cheap there,
+so `vm.swappiness = 100` treats swap and page cache as equal rather than penalising swap.
+`dirty_bytes` and `dirty_background_bytes` bound writeback in absolute terms instead of as a
+percentage of RAM, which matters because Fedora's defaults scale with memory size.
+`watermark_scale_factor`, `watermark_boost_factor`, `compaction_proactiveness` and
+`defrag_mode` give kswapd more room and keep higher-order blocks available.
+
+Dirty limits are written as bytes only. `dirty_bytes` and `dirty_ratio` are mutually
+exclusive — writing either zeroes the other — so writing the ratio after the byte limit
+would clear it and leave both at zero, throttling at the first dirty page. The ratios read
+back as 0 on their own.
+
+The load step is a guarded `command.run`, because the kernel offers no way to tell whether a
+write changed a value. It reads each key back from `/proc/sys` and only runs `sysctl -p` when
+something differs, which is what makes the second apply a no-op.
 
 ## Conventions
 
