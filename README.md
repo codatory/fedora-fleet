@@ -29,11 +29,12 @@ manifests/
     dev-tools.yaml        A developer's packages: toolchain, shells, containers
     browsers.yaml         Chrome and Brave Origin, from their vendors' repositories
     codecs.yaml           RPM Fusion, and the full media codecs
-    fonts.yaml            Noto, Liberation, DejaVu, and the Microsoft core fonts
+    fonts.yaml            Noto, Liberation, DejaVu, Roboto, the Microsoft core fonts, Selawik
     vm-tuning.yaml        Kernel VM tuning for zram swap, via /etc/sysctl.d
     zram.yaml             zram swap compressed with lz4
     files/
       mise.sh             The /etc/profile.d hook mise.yaml installs
+      selawik-segoe.conf  The fontconfig rules fonts.yaml installs for Segoe UI
       vm-tuning.conf      The sysctl.d file vm-tuning.yaml installs
       zram-compression.conf  The zram-generator drop-in zram.yaml installs
 scripts/
@@ -215,7 +216,7 @@ dnf without a shell. Installing one is already a no-op once present. See
 ## Fonts
 
 `manifests/base/fonts.yaml` installs the font families a workstation actually renders, in
-three groups.
+several groups.
 
 Noto, but not all of it: `google-noto-fonts-common`, `google-noto-sans-fonts`,
 `google-noto-serif-fonts` and `google-noto-color-emoji-fonts`. The `google-noto-fonts-all`
@@ -226,6 +227,19 @@ Liberation and DejaVu. Liberation is the metric-compatible set: it has the same 
 widths as Arial, Times New Roman and Courier New, so a document laid out for those does not
 reflow. `liberation-fonts` resolves to the `liberation-fonts-all` metapackage. DejaVu is the
 broad Unicode fallback that fills in the glyphs the metric fonts leave out.
+
+Roboto, from `google-roboto-fonts`. It is a named fallback in the font stack most
+cross-platform interfaces list — the family after the system UI font and before the
+generics, as in `"Segoe UI", Roboto, "Noto Sans", sans-serif`. Installed, such a stack
+resolves to it; without it, the same stack skips the entry the author intended and renders
+in Noto Sans. That is a different job from the metric substitutes above, which catch a name
+nothing else provides.
+
+It needs no alias, because the requested name is the family name; nothing in fontconfig
+references Roboto, and installing the package is enough. The siblings are left out:
+`google-roboto-condensed-fonts`, `google-roboto-slab-fonts` and `google-roboto-mono-fonts`
+declare families of their own (`Roboto Condensed`, `Roboto Slab`, `Roboto Mono`), which no
+stack falls back to from `Roboto`.
 
 Microsoft's core fonts for the web — Arial, Times New Roman, Verdana, Georgia, Trebuchet,
 Courier New, Comic Sans, Impact, Andale Mono and Webdings — are the ones a web page or a
@@ -251,6 +265,31 @@ mistaken for done. An archive that does not match its checksum fails the downloa
 missing one fails the extraction, rather than leaving a partially populated font directory.
 fontconfig scans `/usr/share/fonts` recursively, so no font path or index has to be
 registered.
+
+The manifest also installs **Selawik**, Microsoft's own open replacement for Segoe UI, under
+the SIL Open Font License. Segoe UI is the family Windows-authored documents and UI mockups
+name, so it is the substitute most likely to be asked for by a file that makes no sense on
+Linux otherwise.
+
+Fedora ships neither the font nor a COPR for it, so the binaries come from upstream's only
+release — a 530 KB web-format zip whose `.ttf` files sit among `.eot`, `.svg` and `.woff2`
+siblings. `file.download` pins it by `sha256` and a guarded `command.run` extracts just the
+five faces with `unzip`. Upstream's README notes two open issues, missing kerning against
+Segoe UI and imperfect hinting, so it is a close substitute rather than an exact one.
+
+Installing the family is not enough on its own. Fedora's `45-latin.conf` routes Segoe UI to
+`system-ui`, which resolves to the desktop's own UI font, so a document asking for Segoe UI
+would keep getting Adwaita Sans. `files/selawik-segoe.conf` is copied to
+`/etc/fonts/conf.d/62-selawik-segoe.conf` to substitute Selawik for it, and also for
+`Segoe UI Webfont`, the family name Microsoft's own webfont kit declares.
+
+The rule uses `match`/`edit` with `mode="assign"` rather than an `<alias>` with `<prefer>`:
+an alias carries a single family name, and `prefer` can only reorder candidates already in
+the request — there is nothing for it to reorder onto a font the application did not name.
+`assign` with `binding="same"` swaps the family in place, leaving the rest of the caller's
+family list intact so glyphs Selawik lacks fall through to it. Neither the rules nor the
+font files need an `fc-cache` run: fontconfig re-reads `conf.d` per program and scans font
+directories on demand, so the manifest has no step that would report drift on every apply.
 
 ## How mise is installed
 

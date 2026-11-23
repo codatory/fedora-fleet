@@ -2,11 +2,12 @@
 
 # Fonts: the families a workstation actually renders, rather than every face a family has.
 #
-# Three groups. Noto for coverage the system UI fonts leave out. Liberation and DejaVu so
-# that applications which ask for Arial, Times New Roman or Courier New by name get a
-# substituted face of the right proportions instead of a fallback of the wrong ones. And
-# Microsoft's core fonts for the web, which is what documents and web pages actually
-# specify, so they render as designed rather than approximately.
+# In groups. Noto for coverage the system UI fonts leave out. Liberation and DejaVu so that
+# applications which ask for Arial, Times New Roman or Courier New by name get a substituted
+# face of the right proportions instead of a fallback of the wrong ones. Roboto, which most
+# cross-platform font stacks name as a fallback. Microsoft's core fonts for the web, which is
+# what documents and web pages actually specify, so they render as designed rather than
+# approximately. And Selawik, the open stand-in for Segoe UI.
 version: 1
 
 actions:
@@ -35,6 +36,24 @@ actions:
       - dejavu-sans-fonts
       - dejavu-serif-fonts
       - dejavu-sans-mono-fonts
+
+  # Roboto, because it is a named fallback in the font stack most cross-platform interfaces
+  # list — the family after the system UI font and before the generics, as in
+  # `"Segoe UI", Roboto, "Noto Sans", sans-serif`. Installed, such a stack resolves to it;
+  # without it, the same stack skips the entry the author intended and renders in Noto Sans.
+  # That makes it different from the metric substitutes above, which exist to catch a name
+  # nothing else provides.
+  #
+  # Nothing in fontconfig references Roboto, so unlike Selawik below this needs no alias:
+  # the requested name is the family name, and asking for `Roboto` resolves to it as soon as
+  # the package is installed.
+  #
+  # Only the base family. The siblings — `google-roboto-condensed-fonts`,
+  # `google-roboto-slab-fonts` and `google-roboto-mono-fonts` — declare families of their own
+  # (`Roboto Condensed`, `Roboto Slab`, `Roboto Mono`), which no stack falls back to from
+  # `Roboto`, so installing them would add unused fonts to every machine.
+  - action: package.install
+    name: google-roboto-fonts
 
   # Microsoft's core fonts for the web — Arial, Times New Roman, Verdana, Georgia, Trebuchet,
   # Courier New, Comic Sans, Impact, Andale Mono and Webdings — installed without the RPM
@@ -162,4 +181,74 @@ actions:
             cabextract -q -L -F '*.ttf' -d "$dest" "$cache/$cab"
         done
 
-        fc-cache -f "$dest" >/dev/null 2>&1 || true
+  # Selawik: Microsoft's own open replacement for Segoe UI, released under the SIL Open Font
+  # License with "Selawik" reserved. Segoe UI is what Windows-authored documents and UI
+  # mockups name, so this is the one substitute that is metric-compatible with it by design
+  # rather than by coincidence.
+  #
+  # Fedora packages neither the font nor a COPR, so the binaries come from upstream's only
+  # release, which is a web-format zip: the .ttf files are among .eot/.svg/.woff2 siblings
+  # that a desktop has no use for. It is from 2015 and upstream's README still lists two
+  # open issues, missing kerning against Segoe UI and imperfect hinting. Neither affects
+  # whether the glyphs render, but the kerning gap means spacing between pairs is close
+  # rather than identical, so this is a good substitute and not a pixel-perfect one.
+  - action: package.install
+    name: unzip
+
+  - action: file.download
+    from: https://github.com/microsoft/Selawik/releases/download/1.01/Selawik_Release.zip
+    to: /var/cache/fleet-fonts/Selawik_Release.zip
+    sha256: 3f62c51e05e3b5a1e6241cf92a371f0be2ea1183aa87b30718bbd40832a8d423
+    privileged: true
+
+  # The guard is the expected set again, and `-o` plus the `*.ttf` filter keeps the
+  # extraction to the five faces a desktop reads. `unzip -o` overwrites in place, so a
+  # partial extraction is repaired rather than left half-written.
+  - action: command.run
+    command: sh
+    privileged: true
+    args:
+      - -c
+      - |
+        set -eu
+        dest=/usr/share/fonts/selawik
+        zip=/var/cache/fleet-fonts/Selawik_Release.zip
+        expected="selawk.ttf selawkb.ttf selawkl.ttf selawksb.ttf selawksl.ttf"
+
+        incomplete=0
+        for face in $expected; do
+            if [ ! -s "$dest/$face" ]; then
+                incomplete=1
+                break
+            fi
+        done
+        if [ "$incomplete" -eq 0 ]; then
+            exit 0
+        fi
+
+        unzip -oq "$zip" '*.ttf' -d "$dest"
+
+  # Installing the family is not enough on its own. 45-latin.conf routes Segoe UI to
+  # `system-ui`, which resolves to the desktop's own UI font, so a document asking for
+  # Segoe UI would keep getting Adwaita Sans while Selawik sat unused. The copied file
+  # substitutes the family, and does the same for "Segoe UI Webfont", the name Microsoft's
+  # own webfont kit declares.
+  #
+  # It is a `match`/`edit` pair rather than an `alias` because one rule has to cover two
+  # names, and it edits with `assign` rather than `prefer`: there is no existing candidate
+  # for `prefer` to reorder onto, and an alias would lose the rule for the second name.
+  # `assign` with `binding="same"` swaps the family in place and leaves the rest of the
+  # caller's list intact, so glyphs Selawik lacks (it has no Cyrillic, Greek or CJK) still
+  # fall through to the next family the application asked for.
+  #
+  # fontconfig re-reads conf.d per program and scans font directories on demand, so neither
+  # the rules nor the extracted files need an `fc-cache` run to take effect. That keeps
+  # this manifest free of a step that would report drift on every apply.
+  #
+  # Segoe UI Historic, Segoe UI Symbol and Segoe UI Emoji are separate Microsoft families
+  # with no Selawik equivalent, and are deliberately not claimed here.
+  - action: file.copy
+    from: selawik-segoe.conf
+    to: /etc/fonts/conf.d/62-selawik-segoe.conf
+    chmod: "0644"
+    privileged: true

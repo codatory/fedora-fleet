@@ -320,6 +320,78 @@ package action without weakening the whole transaction, so a manifest should not
 `fonts.yaml` fetches and unpacks the contents itself instead, with `file.download` and a
 pinned `sha256` per archive, which is both verifiable and idempotent.
 
+## Installing a font is not the same as it being used
+
+Verified with fontconfig 2.18.3 on Fedora 45. `fonts.yaml` depends on this for Selawik.
+
+**Dropping a `.ttf` into `/usr/share/fonts` only makes it available, not chosen.** On this
+image `45-latin.conf` already aliases `Segoe UI` to `system-ui`:
+
+```xml
+<alias>
+  <family>Segoe UI</family>
+  <default><family>system-ui</family></default>
+</alias>
+```
+
+and `60-latin.conf` lists `system-ui` as preferring Adwaita Sans, Cantarell, Noto Sans UI and
+then Segoe UI. So with Selawik installed but no rule matching it, `fc-match "Segoe UI"` still
+returns `AdwaitaSans-Regular.ttf`, and nothing ever selects the new font by name. A conf.d
+file with a `match`/`edit` rule is what makes the install do anything:
+
+```xml
+<match target="pattern">
+  <test qual="any" name="family"><string>Segoe UI</string></test>
+  <edit name="family" mode="assign" binding="same"><string>Selawik</string></edit>
+</match>
+```
+
+With that in place, `Segoe UI`, `:bold`, `:semibold` and `:light` resolve to the matching
+Selawik face, while `system-ui` and the unrelated Segoe UI Historic and Segoe UI Symbol
+families are untouched.
+
+**`match`/`edit` rather than `alias`, and `assign` rather than `prefer`.** An `<alias>` carries
+one family name, so covering several names (Selawik serves both `Segoe UI` and `Segoe UI
+Webfont`, the family Microsoft's webfont kit declares) takes one `match` block per name.
+`prefer` only reorders candidates that are already in the pattern, which does nothing when the
+substitute font is not in the caller's family list — `assign` is what puts it there.
+`binding="same"` (not `weak`) records that a document naming Segoe UI means that typeface
+rather than any sans-serif.
+
+`assign` replaces the matched family rather than the whole pattern: with `FC_DEBUG=4096
+fc-match "Segoe UI, Comfortaa"` the resulting family list starts `"Selawik"(s)
+"Comfortaa"(s) "Adwaita Sans"(w) …`, so an explicit fallback still survives and covers the
+codepoints Selawik lacks. Selawik's cmap has 348 codepoints and no Cyrillic, Greek or CJK, so
+`fc-match "Segoe UI:charset=0410"` correctly returns another font.
+
+**No `fc-cache` step is needed, which matters for idempotency.** fontconfig re-reads
+`conf.d` for each program and scans font directories on demand, so a newly extracted font
+and a newly installed rule are both live immediately. An `fc-cache -f` in a manifest would
+be an unguarded `command.run` that reports drift on every apply, for no gain.
+
+**Check the weight metadata before trusting a family.** Selawik's Light and Semilight faces
+both declare `usWeightClass = 300` (Semilight sets `fsSelection` bit 8 instead), so a
+request for one can return the other while Regular, Semibold and Bold resolve distinctly.
+
+**A family name starting with `-` swallows the rest of an `fc-match` list.** `-apple-system`
+is the usual culprit, because it is the first entry in most CSS font stacks and is a keyword
+a browser resolves itself rather than a family fontconfig knows. Passed to fontconfig it
+parses as an empty family, and the whole list is discarded — the match then falls to the
+generic default:
+
+```sh
+fc-match -- '-apple-system, Roboto'   # Noto Sans, not Roboto
+fc-match -- 'Roboto, -apple-system'   # Roboto, so position matters
+fc-match -- 'zzz, Roboto'             # Roboto: an unknown name without a dash is fine
+```
+
+So a stack under test has to have its `-apple-system` entries removed first, or the result
+says nothing about the fonts installed. `BlinkMacSystemFont` has no leading dash and is
+harmless — it is an unknown family, and fontconfig skips it. Two related traps when checking
+by hand: the whole pattern must be one argument, and quoting a family inside it keeps the
+quotes as part of the name, so `fc-match -- '"Segoe UI", Roboto'` never matches the alias and
+looks like a broken rule.
+
 ## zram, zswap and reinitialising a device
 
 Verified on Fedora 45 with zram-generator 1.2.1 and zram-generator-defaults. `zram.yaml`
