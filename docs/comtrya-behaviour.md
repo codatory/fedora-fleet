@@ -279,6 +279,47 @@ install` before the package names, so:
 else. Check the transaction the first time rather than assuming: `dnf install --assumeno
 --allowerasing ...` lists what it will remove. A second run afterwards is a no-op.
 
+### An RPM with no digest and no signature
+
+`msttcore-fonts-installer` from SourceForge (the package `fonts.yaml` deliberately does not
+use) carries neither a header nor a payload digest and no OpenPGP signature:
+
+```
+$ rpm -Kv msttcore-fonts-installer-2.6-1.noarch.rpm
+    Header OpenPGP signature: NOTFOUND
+    Header SHA256 digest: NOTFOUND
+    Payload SHA256 digest: NOTFOUND
+```
+
+rpm refuses it by default — `package msttcore-fonts-installer-2.6-1.noarch does not verify:
+no digest` — and both `--nodigest` and `--nosignature` are needed to get past that, since
+either one alone still trips the other check.
+
+**Those flags cannot reach dnf, and comtrya's `package.install` only runs dnf.** `--nodigest`
+and `--nosignature` are `rpm` options, and dnf5 rejects both outright:
+
+```
+$ dnf install --assumeno --nodigest ./msttcore-fonts-installer-2.6-1.noarch.rpm
+Unknown argument "--nodigest" for command "install". Add "--help" for more information...
+$ echo $?
+2
+```
+
+`extra_args` cannot help, because it is appended to `dnf install`, not to `rpm`.
+
+The one dnf5 route is `--setopt=tsflags=nocrypto`, which maps to
+`RPMTRANS_FLAG_NOFILEDIGEST`. It is a transaction flag, so it disables digest checking for
+**every package in that transaction** — the dependencies included — rather than for the one
+archive that needs it. The other `tsflags` values `dnf5.conf` documents (`noscripts`, `test`,
+`nodocs`, `justdb`, …) do not cover digest or signature verification at all, and
+`dnf install --no-gpgchecks` is unrelated: it turns off the repository key check, not the
+"no digest" failure above.
+
+The practical conclusion is that a digest-less RPM is not installable through comtrya's
+package action without weakening the whole transaction, so a manifest should not try.
+`fonts.yaml` fetches and unpacks the contents itself instead, with `file.download` and a
+pinned `sha256` per archive, which is both verifiable and idempotent.
+
 ## zram, zswap and reinitialising a device
 
 Verified on Fedora 45 with zram-generator 1.2.1 and zram-generator-defaults. `zram.yaml`

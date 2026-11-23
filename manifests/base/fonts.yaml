@@ -1,0 +1,165 @@
+# yaml-language-server: $schema=https://comtrya.dev/schema.json
+
+# Fonts: the families a workstation actually renders, rather than every face a family has.
+#
+# Three groups. Noto for coverage the system UI fonts leave out. Liberation and DejaVu so
+# that applications which ask for Arial, Times New Roman or Courier New by name get a
+# substituted face of the right proportions instead of a fallback of the wrong ones. And
+# Microsoft's core fonts for the web, which is what documents and web pages actually
+# specify, so they render as designed rather than approximately.
+version: 1
+
+actions:
+  # Noto, but not the whole firehose. `google-noto-fonts-all` is a metapackage that pulls
+  # 263 packages and 395 MiB of script coverage — CJK, historic scripts, musical notation —
+  # that nothing on this workstation asks for. These four are the Latin sans and serif, the
+  # common data they share, and the emoji font the desktop otherwise renders as boxes.
+  - action: package.install
+    list:
+      - google-noto-fonts-common
+      - google-noto-sans-fonts
+      - google-noto-serif-fonts
+      - google-noto-color-emoji-fonts
+
+  # Liberation is the metric-compatible set: its characters have the same advance widths
+  # and line heights as Arial, Times New Roman and Courier New, so a document laid out for
+  # those does not reflow when it is opened here. `liberation-fonts` resolves to the
+  # `liberation-fonts-all` metapackage, which carries the sans, serif and mono faces.
+  #
+  # DejaVu is the broad Unicode fallback rather than a metric match — it descends from
+  # Bitstream Vera and covers most of Latin, Greek, Cyrillic and common symbols. It is what
+  # fills in for the glyphs the metric fonts leave out.
+  - action: package.install
+    list:
+      - liberation-fonts
+      - dejavu-sans-fonts
+      - dejavu-serif-fonts
+      - dejavu-sans-mono-fonts
+
+  # Microsoft's core fonts for the web — Arial, Times New Roman, Verdana, Georgia, Trebuchet,
+  # Courier New, Comic Sans, Impact, Andale Mono and Webdings — installed without the RPM
+  # that normally provides them.
+  #
+  # `msttcore-fonts-installer` cannot be installed by comtrya. Its header carries neither a
+  # digest nor a signature, and `dnf install --nodigest` — the flag that would skip that —
+  # is an rpm option that dnf5 rejects outright with exit 2. The only dnf5 route to skip the
+  # check is `--setopt=tsflags=nocrypto`, which turns off digest verification for the whole
+  # transaction rather than for this one package, so it would weaken every install in the
+  # run to accommodate one archive from 2013.
+  #
+  # The RPM is a thin wrapper regardless. Its payload "fonts" are 7-byte files holding the
+  # word `filler`, and its postinstall downloads the real fonts over plain HTTP and then
+  # exits 0 even when that download fails, so a machine can end up with the placeholders and
+  # no error. Doing the same work here fetches over https, pins every archive by SHA-256 so
+  # a changed mirror fails the run, and leaves the result checkable.
+  #
+  # The sources are the ones the RPM used: the `corefonts` project for the classic set, and
+  # `mscorefonts2` for EUupdate.EXE. EUupdate carries the 2007 European Union versions of
+  # Arial, Times New Roman, Trebuchet and Verdana, so it stands in for the older arial32,
+  # times32, trebuc32 and verdan32 archives and is the only font source for those families.
+
+  # cabextract unpacks the cabinets that wrap the fonts. `xorg-x11-font-utils` is not needed
+  # with it: that package is for the core X font path (mkfontscale, xset), which fontconfig
+  # and a Wayland or Xft desktop do not use.
+  - action: package.install
+    name: cabextract
+
+  # One archive per file, each with the checksum it had when this manifest was written, so
+  # an altered or truncated mirror is a failure rather than a silent substitution. Kept in a
+  # cache directory of their own because the extraction needs them again if the installed
+  # fonts are ever removed.
+  - action: file.download
+    from: https://downloads.sourceforge.net/corefonts/the%20fonts/final/andale32.exe
+    to: /var/cache/fleet-fonts/andale32.exe
+    sha256: 0524fe42951adc3a7eb870e32f0920313c71f170c859b5f770d82b4ee111e970
+    privileged: true
+
+  - action: file.download
+    from: https://downloads.sourceforge.net/corefonts/the%20fonts/final/arialb32.exe
+    to: /var/cache/fleet-fonts/arialb32.exe
+    sha256: a425f0ffb6a1a5ede5b979ed6177f4f4f4fdef6ae7c302a7b7720ef332fec0a8
+    privileged: true
+
+  - action: file.download
+    from: https://downloads.sourceforge.net/corefonts/the%20fonts/final/comic32.exe
+    to: /var/cache/fleet-fonts/comic32.exe
+    sha256: 9c6df3feefde26d4e41d4a4fe5db2a89f9123a772594d7f59afd062625cd204e
+    privileged: true
+
+  - action: file.download
+    from: https://downloads.sourceforge.net/corefonts/the%20fonts/final/courie32.exe
+    to: /var/cache/fleet-fonts/courie32.exe
+    sha256: bb511d861655dde879ae552eb86b134d6fae67cb58502e6ff73ec5d9151f3384
+    privileged: true
+
+  - action: file.download
+    from: https://downloads.sourceforge.net/corefonts/the%20fonts/final/georgi32.exe
+    to: /var/cache/fleet-fonts/georgi32.exe
+    sha256: 2c2c7dcda6606ea5cf08918fb7cd3f3359e9e84338dc690013f20cd42e930301
+    privileged: true
+
+  - action: file.download
+    from: https://downloads.sourceforge.net/corefonts/the%20fonts/final/impact32.exe
+    to: /var/cache/fleet-fonts/impact32.exe
+    sha256: 6061ef3b7401d9642f5dfdb5f2b376aa14663f6275e60a51207ad4facf2fccfb
+    privileged: true
+
+  - action: file.download
+    from: https://downloads.sourceforge.net/corefonts/the%20fonts/final/webdin32.exe
+    to: /var/cache/fleet-fonts/webdin32.exe
+    sha256: 64595b5abc1080fba8610c5c34fab5863408e806aafe84653ca8575bed17d75a
+    privileged: true
+
+  - action: file.download
+    from: https://downloads.sourceforge.net/mscorefonts2/cabs/EUupdate.EXE
+    to: /var/cache/fleet-fonts/EUupdate.EXE
+    sha256: 464dd2cd5f09f489f9ac86ea7790b7b8548fc4e46d9f889b68d2cdce47e09ea8
+    privileged: true
+
+  # Unpacking is the one step with no action of its own, so it is a command, guarded the way
+  # docs/comtrya-behaviour.md asks. The guard asks two questions: every expected face is
+  # present, and none of them is a placeholder. The second matters because a machine where
+  # the RPM ran with a failed postinstall has the filenames but 7-byte files behind them, so
+  # a presence check alone would call it done. Extraction overwrites in place, and fontconfig
+  # scans /usr/share/fonts recursively, so no font path or index file has to be registered.
+  - action: command.run
+    command: sh
+    privileged: true
+    args:
+      - -c
+      - |
+        set -eu
+        dest=/usr/share/fonts/msttcore
+        cache=/var/cache/fleet-fonts
+        expected="andalemo.ttf arial.ttf arialbd.ttf arialbi.ttf ariali.ttf ariblk.ttf
+        comic.ttf comicbd.ttf cour.ttf courbd.ttf courbi.ttf couri.ttf georgia.ttf
+        georgiab.ttf georgiai.ttf georgiaz.ttf impact.ttf times.ttf timesbd.ttf timesbi.ttf
+        timesi.ttf trebuc.ttf trebucbd.ttf trebucbi.ttf trebucit.ttf verdana.ttf
+        verdanab.ttf verdanai.ttf verdanaz.ttf webdings.ttf"
+
+        incomplete=0
+        for face in $expected; do
+            if [ ! -s "$dest/$face" ]; then
+                incomplete=1
+                break
+            fi
+        done
+        if [ "$incomplete" -eq 0 ] &&
+           [ -z "$(find "$dest" -maxdepth 1 -name '*.ttf' -size -10k 2>/dev/null)" ]; then
+            exit 0
+        fi
+
+        archives="andale32.exe arialb32.exe comic32.exe courie32.exe georgi32.exe
+        impact32.exe webdin32.exe EUupdate.EXE"
+        for cab in $archives; do
+            if [ ! -s "$cache/$cab" ]; then
+                echo "missing font archive: $cache/$cab" >&2
+                exit 1
+            fi
+        done
+
+        for cab in $archives; do
+            cabextract -q -L -F '*.ttf' -d "$dest" "$cache/$cab"
+        done
+
+        fc-cache -f "$dest" >/dev/null 2>&1 || true

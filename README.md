@@ -29,6 +29,7 @@ manifests/
     dev-tools.yaml        A developer's packages: toolchain, shells, containers
     browsers.yaml         Chrome and Brave Origin, from their vendors' repositories
     codecs.yaml           RPM Fusion, and the full media codecs
+    fonts.yaml            Noto, Liberation, DejaVu, and the Microsoft core fonts
     vm-tuning.yaml        Kernel VM tuning for zram swap, via /etc/sysctl.d
     zram.yaml             zram swap compressed with lz4
     files/
@@ -210,6 +211,46 @@ The release packages are fetched by URL, with the Fedora version read from `os.v
 rather than written down: `$releasever` is not expanded in an argument, since comtrya runs
 dnf without a shell. Installing one is already a no-op once present. See
 [`docs/comtrya-behaviour.md`](docs/comtrya-behaviour.md).
+
+## Fonts
+
+`manifests/base/fonts.yaml` installs the font families a workstation actually renders, in
+three groups.
+
+Noto, but not all of it: `google-noto-fonts-common`, `google-noto-sans-fonts`,
+`google-noto-serif-fonts` and `google-noto-color-emoji-fonts`. The `google-noto-fonts-all`
+metapackage is 263 packages and 395 MiB of script coverage — CJK, historic scripts, musical
+notation — that nothing here asks for.
+
+Liberation and DejaVu. Liberation is the metric-compatible set: it has the same advance
+widths as Arial, Times New Roman and Courier New, so a document laid out for those does not
+reflow. `liberation-fonts` resolves to the `liberation-fonts-all` metapackage. DejaVu is the
+broad Unicode fallback that fills in the glyphs the metric fonts leave out.
+
+Microsoft's core fonts for the web — Arial, Times New Roman, Verdana, Georgia, Trebuchet,
+Courier New, Comic Sans, Impact, Andale Mono and Webdings — are the ones a web page or a
+Word document actually specifies, so the manifest installs them for real rather than relying
+on a substitute.
+
+Those last ones are where the manifest does something unusual. They normally come from
+`msttcore-fonts-installer`, which comtrya cannot install: the RPM carries neither a digest
+nor a signature, and the `--nodigest` flag that skips that check is an `rpm` option that
+dnf5 rejects. The only dnf5 route is `--setopt=tsflags=nocrypto`, which disables digest
+verification for the entire transaction, not just that archive. See
+[`docs/comtrya-behaviour.md`](docs/comtrya-behaviour.md).
+
+The RPM is a thin wrapper in any case. Its payload "fonts" are 7-byte files containing the
+word `filler`; the postinstall downloads the real ones over plain HTTP and then exits 0 even
+when that fails. So the manifest does the work itself: `file.download` fetches the eight
+archives over https with a pinned `sha256` each, and a guarded `command.run` unpacks them
+with `cabextract` into `/usr/share/fonts/msttcore`.
+
+The guard checks for all thirty expected faces and rejects a placeholder, so a machine where
+the RPM's postinstall failed — filenames present, real files absent — is repaired rather than
+mistaken for done. An archive that does not match its checksum fails the download, and a
+missing one fails the extraction, rather than leaving a partially populated font directory.
+fontconfig scans `/usr/share/fonts` recursively, so no font path or index has to be
+registered.
 
 ## How mise is installed
 
