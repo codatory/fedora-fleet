@@ -539,6 +539,79 @@ back as 0 because the kernel set it that way.
 **`/etc/sysctl.conf` is a symlink to `/etc/sysctl.d/99-sysctl.conf`** on Fedora 45, so a file
 named later than `99-` sorts after it. An earlier name cannot override Fedora's.
 
+## Flatpak and `gsettings`
+
+Verified with flatpak 1.18.4 on Fedora 45. `desktop.yaml` depends on all of this.
+
+**`flatpak install` of an application that is already installed still loads the remote's
+summary.** Online it exits 0 with `Skipping: <app> is already installed`; offline it fails:
+
+```
+error: Unable to load summary from remote flathub: While fetching
+https://dl.flathub.org/repo/summary.idx: [7] Could not connect to server
+```
+
+So it is not a no-op to re-install, and a manifest should guard on
+`flatpak info --system <app>` before calling `flatpak install`.
+
+**Fedora's `flathub` remote is filtered, not the full repository.** `flatpak remotes
+--show-details` reports `system,filtered`, and the allowlist is
+`/usr/share/flatpak/fedora-flathub.filter`. `flatpak remote-ls flathub --app
+--columns=application` is the way to check that an app ID is installable, since `--if-not-exists`
+leaves the filtered remote in place rather than replacing it. `remote-add` is guarded on
+`flatpak remotes --system --columns=name`, so a second run does not contact the remote.
+
+**`gsettings get` prints a string list as `['a', 'b']`, and an empty one as `@as []`.** The
+type annotation is part of the output, not something a list can be compared against directly.
+It shows the *effective* value, which includes the schema default: Fedora's default for
+`org.gnome.shell enabled-extensions` is `['background-logo@fedorahosted.org']`, so a script
+that assumes an empty starting list will silently drop that default when it writes. Read the
+current list and write it back with the wanted entries appended.
+
+**`gsettings set` writes the user database; it does not change a system default.** A dconf
+system database (in `/etc/dconf/db/local.d/`) supplies a default that any user value
+overrides, so a system-wide file does not converge a user who has already set the key. The
+per-user write in `desktop.yaml` only affects the account that runs the manifest.
+
+## Extension bundles and when the shell sees them
+
+Verified with GNOME Shell 51.1 on Fedora 45. `desktop.yaml` depends on all of this.
+
+**An extension bundle from extensions.gnome.org carries modes that are wrong for an
+installation.** In Tiling Shell 77, `metadata.json` is stored as `0600` and the other 140
+entries as `0777`, and `unzip` restores those modes. Unpacked as root into
+`/usr/share/gnome-shell/extensions/`, that is both broken and unsafe: the shell runs as the
+user, cannot read a root-owned `0600` `metadata.json`, and reports the extension as absent;
+and `0777` lets any local account rewrite code the shell loads. Follow the extraction with
+`chmod -R u=rwX,go=rX`, and make the modes part of the idempotency guard so a tree unpacked
+before the fix is repaired instead of being left alone.
+
+**The shell scans extension directories when it starts, not continuously.** Installing an
+extension while a session is running leaves it unknown to `gnome-extensions list` and to
+`org.gnome.Shell.Extensions.ListExtensions`, even after the dconf `enabled-extensions` list
+names it:
+
+```
+$ gnome-extensions info caffeine@patapon.info
+Extension "caffeine@patapon.info" doesn't exist
+$ ls /usr/share/gnome-shell/extensions/caffeine@patapon.info/metadata.json
+-rw-r--r--. 1 root root ... metadata.json
+```
+
+`ReloadExtension` is in the D-Bus introspection but returns `UnknownMethod`, and on Wayland
+the shell cannot be restarted in place, so a logout and login is the only refresh. A second
+apply cannot fix this: the extension is installed and enabled, the running session just has
+not looked.
+
+**An install from extensions.gnome.org looks instant for a different reason: it calls the
+running service.** The browser connector invokes `InstallRemoteExtension`, which downloads
+the bundle and adds the extension to the in-memory list before returning, so nothing has to
+be rescanned. That is not a directory watcher. A valid probe extension placed in
+`~/.local/share/gnome-shell/extensions` did not appear in `gnome-extensions list`, and
+`gnome-extensions install` of a local bundle unpacked it with sane modes and still did not
+register it. Only `InstallRemoteExtension` refreshes the list, so a file-based install cannot
+use it without giving up a pinned, system-wide extension.
+
 ## Variants replace, they do not merge
 
 A variant that applies is used *instead of* the action, not merged into it:

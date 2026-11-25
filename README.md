@@ -29,6 +29,7 @@ manifests/
     dev-tools.yaml        A developer's packages: toolchain, shells, containers
     browsers.yaml         Chrome and Brave Origin, from their vendors' repositories
     codecs.yaml           RPM Fusion, and the full media codecs
+    desktop.yaml          GNOME packages, Flatpaks, extensions, and the window buttons
     fonts.yaml            Noto, Liberation, DejaVu, Roboto, the Microsoft core fonts, Selawik
     vm-tuning.yaml        Kernel VM tuning for zram swap, via /etc/sysctl.d
     zram.yaml             zram swap compressed with lz4
@@ -212,6 +213,46 @@ The release packages are fetched by URL, with the Fedora version read from `os.v
 rather than written down: `$releasever` is not expanded in an argument, since comtrya runs
 dnf without a shell. Installing one is already a no-op once present. See
 [`docs/comtrya-behaviour.md`](docs/comtrya-behaviour.md).
+
+## Desktop
+
+`manifests/base/desktop.yaml` installs the desktop's own tools and turns on the GNOME
+extensions a workstation is expected to have.
+
+Tweaks, the Extensions app and GNOME Firmware are distribution packages, as are Piper and
+`libratbag-ratbagd` — the GUI and the daemon that let a mouse or keyboard be configured.
+GNOME Firmware is the fwupd front end for listing devices and the firmware updates they have.
+Gearlever, Zed and Pika Backup come from Flathub instead, since each is published there by
+its own project: Gearlever keeps AppImages updated, Zed is the editor, and Pika Backup is the
+restic front end. Fedora ships Flathub as a filtered remote and all three are in that
+allowlist, so the remote is left as it is; on a Fedora without one, the manifest adds the
+full remote.
+
+Three of the four extensions are Fedora packages, built against the GNOME Shell the release
+ships: Dash to Panel, Blur my Shell and Caffeine. Tiling Shell has no Fedora package, so it is
+fetched from extensions.gnome.org, pinned to version 77 with a `sha256` and unpacked
+system-wide into `/usr/share/gnome-shell/extensions`. Installing a Fedora extension package
+does not enable it, so the manifest enables all four itself.
+
+The bundle stores its files with modes meant for an author's machine — `metadata.json` as
+`0600`, the rest as `0777` — and `unzip` restores them, so the unpack step normalises them.
+Without that, the user's shell could not read `metadata.json`, and every local account could
+rewrite code the shell loads. Installing an extension while a session is running does not
+make it appear either: the shell scans those directories at startup and cannot be restarted
+in place on Wayland, so the first apply needs a logout and login.
+
+`enabled-extensions` is a per-user key, so that step applies to the account running the
+manifest, not to the machine. It reads the current list and adds only the UUIDs that are
+missing, leaving anything the user had already enabled alone, and a second run finds all four
+and writes nothing. The shell picks the change up, but extension code is read as the shell
+loads it, so a newly installed extension starts working at the next login. The same section
+sets `button-layout` to `appmenu:minimize,maximize,close`: Fedora's `appmenu:close` has no
+minimize or maximize button.
+
+Both `gsettings` steps are `command.run`, because comtrya has no action for them. They are
+guarded on the value they would write, which is what keeps the second apply a no-op. See
+[`docs/comtrya-behaviour.md`](docs/comtrya-behaviour.md) for the Flatpak and `gsettings`
+behaviour they depend on.
 
 ## Fonts
 

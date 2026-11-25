@@ -1,0 +1,193 @@
+# yaml-language-server: $schema=https://comtrya.dev/schema.json
+
+# The desktop: the packages and GNOME customisations a workstation is expected to have.
+#
+# Distribution packages stay packages. The three Flatpaks are desktop applications their
+# vendors publish themselves, so they come from Flathub. The GNOME extensions are enabled for
+# the account that runs the manifest: `enabled-extensions` is a per-user key, and a
+# system-wide default would not override a user who had already changed it.
+version: 1
+
+actions:
+  # `gnome-tweaks` and `gnome-extensions-app` are the two GUIs the rest of this file assumes:
+  # Tweaks for shell settings that have no panel, and Extensions for the switches below.
+  # `flatpak` is the runtime for the applications further down; a Workstation image already
+  # has it, but listing it means the manifest also works on one that does not.
+  #
+  # `libratbag-ratbagd` is the ratbag daemon and `ratbagctl`, and `piper` is its GUI. Piper
+  # talks to the daemon over D-Bus, so both are needed before a mouse or keyboard can be
+  # configured.
+  #
+  # `gnome-firmware` is the desktop front end to fwupd: it lists the machine's devices and
+  # what firmware each of them can be updated to.
+  #
+  # `unzip` is what unpacks Tiling Shell below. `fonts.yaml` also installs it, but a package
+  # already present is a no-op, and depending on another manifest's package would make this
+  # one stop working if that manifest changed.
+  - action: package.install
+    list:
+      - gnome-tweaks
+      - gnome-extensions-app
+      - gnome-firmware
+      - flatpak
+      - libratbag-ratbagd
+      - piper
+      - unzip
+
+  # Three of the four extensions are packaged by Fedora and built against the GNOME Shell the
+  # distribution ships, so they are installed system-wide and updated with the system.
+  # Tiling Shell has no Fedora package and is handled below.
+  #
+  # Installing one of these does not enable it — Fedora leaves that to the user — which is why
+  # the `gsettings` step at the end of the file exists.
+  - action: package.install
+    list:
+      - gnome-shell-extension-dash-to-panel
+      - gnome-shell-extension-blur-my-shell
+      - gnome-shell-extension-caffeine
+
+  # Flathub is where the three applications come from. Fedora Workstation configures it as a
+  # filtered remote, and this leaves that in place; on a machine without it, this adds the
+  # full remote. The remote file is fetched over https and its key is what verifies packages.
+  #
+  # Guarded rather than using `remote-add --if-not-exists`, because the guard is what makes a
+  # second run report nothing to do instead of contacting the remote again.
+  - action: command.run
+    command: sh
+    privileged: true
+    args:
+      - -c
+      - |
+        set -eu
+        if flatpak remotes --system --columns=name | grep -qx flathub; then
+            exit 0
+        fi
+        flatpak remote-add --system flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+  # Gearlever keeps AppImages updated, Zed is the editor, Pika Backup is the restic front end.
+  # All three are in the filtered Flathub remote Fedora ships, so no allowlist change is
+  # needed.
+  #
+  # The guard checks each application rather than letting `flatpak install` decide: installing
+  # an application that is already present exits 0, but it still resolves it against the
+  # remote, so without the check a second apply would do work rather than nothing.
+  - action: command.run
+    command: sh
+    privileged: true
+    args:
+      - -c
+      - |
+        set -eu
+        missing=
+        for app in dev.zed.Zed it.mijorus.gearlever org.gnome.World.PikaBackup; do
+            if ! flatpak info --system "$app" >/dev/null 2>&1; then
+                missing="$missing $app"
+            fi
+        done
+        if [ -z "$missing" ]; then
+            exit 0
+        fi
+        flatpak install --system --noninteractive -y flathub $missing
+
+  # Tiling Shell is not in Fedora's repositories, so it comes from extensions.gnome.org. The
+  # version is pinned: this URL is the download the site serves for version 77, whose metadata
+  # declares support for GNOME Shell 45 through 51. Bumping it means changing the URL, the
+  # cached file name and the checksum together.
+  #
+  # Installing it system-wide, like the packaged extensions, keeps it out of a user's home and
+  # makes it available to every account. The download is verified by its SHA-256 so a changed
+  # or truncated file fails the run instead of being unpacked.
+  - action: directory.create
+    path: /var/cache/fleet-extensions
+    privileged: true
+
+  - action: file.download
+    from: https://extensions.gnome.org/download-extension/tilingshell@ferrarodomenico.com.shell-extension.zip?version_tag=76684
+    to: /var/cache/fleet-extensions/tilingshell-77.zip
+    sha256: 17ab42f990d9b55f66009f50089ca172c62d206b03d0534ac5d9b63cf44e1cd1
+    privileged: true
+
+  # The guard is the version in the extracted metadata, so a bump re-extracts while a second
+  # apply does nothing. `unzip -o` overwrites in place, which repairs a partial extraction
+  # rather than leaving half a directory behind.
+  #
+  # The modes are part of the guard because they are part of a correct extraction. The bundle
+  # stores `metadata.json` as `0600` and everything else as `0777`; `unzip` restores those
+  # modes, which leaves the shell (running as the user) unable to read the metadata and
+  # leaves every local user able to rewrite the extension's code. `chmod` normalises the
+  # tree, and the guard re-runs it on a tree that was unpacked before this was known.
+  - action: command.run
+    command: sh
+    privileged: true
+    args:
+      - -c
+      - |
+        set -eu
+        dest=/usr/share/gnome-shell/extensions/tilingshell@ferrarodomenico.com
+        zip=/var/cache/fleet-extensions/tilingshell-77.zip
+        if [ -f "$dest/metadata.json" ] &&
+           grep -q '"version": 77' "$dest/metadata.json" &&
+           [ -n "$(find "$dest/metadata.json" -perm -0444 -print -quit)" ] &&
+           [ -z "$(find "$dest" -perm /022 -print -quit)" ]; then
+            exit 0
+        fi
+        rm -rf "$dest"
+        mkdir -p "$dest"
+        unzip -oq "$zip" -d "$dest"
+        chmod -R u=rwX,go=rX "$dest"
+
+  # Fedora's default layout is `appmenu:close`, so there is no minimize or maximize button.
+  # This adds both to the right of the title bar and leaves the app menu where it was.
+  #
+  # `gsettings get` prints a string quoted, hence the doubled quotes in the comparison. The
+  # read-back is what keeps a second apply from writing the same value again.
+  - action: command.run
+    command: sh
+    args:
+      - -c
+      - |
+        set -eu
+        want='appmenu:minimize,maximize,close'
+        if [ "$(gsettings get org.gnome.desktop.wm.preferences button-layout)" = "'$want'" ]; then
+            exit 0
+        fi
+        gsettings set org.gnome.desktop.wm.preferences button-layout "$want"
+
+  # Enable the four extensions. `enabled-extensions` is per-user, so this applies to the
+  # account running the manifest, and it adds the UUIDs that are missing rather than replacing
+  # the list, so an extension the user had already enabled stays enabled.
+  #
+  # `gsettings get` prints a string list as `['a', 'b']`, or `@as []` when it is empty. Strip
+  # the type annotation, brackets and quotes, append the wanted UUIDs to the comma-separated
+  # result, and rebuild the list in GVariant syntax only when something was missing.
+  #
+  # The running shell notices a change to `enabled-extensions`, but it reads extension code
+  # as it loads it, so a newly installed extension starts working at the next login.
+  - action: command.run
+    command: sh
+    args:
+      - -c
+      - |
+        set -eu
+        want='dash-to-panel@jderose9.github.com tilingshell@ferrarodomenico.com blur-my-shell@aunetx caffeine@patapon.info'
+        current=$(gsettings get org.gnome.shell enabled-extensions |
+            sed 's/^@as //' | tr -d "[]' ")
+        changed=0
+        for uuid in $want; do
+            case ",$current," in
+                *",$uuid,"*) ;;
+                *)
+                    if [ -z "$current" ]; then
+                        current=$uuid
+                    else
+                        current="$current,$uuid"
+                    fi
+                    changed=1
+                    ;;
+            esac
+        done
+        if [ "$changed" -eq 0 ]; then
+            exit 0
+        fi
+        list=$(printf '%s' "$current" | sed "s/[^,]*/'&'/g")
+        gsettings set org.gnome.shell enabled-extensions "[$list]"
